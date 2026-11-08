@@ -1,80 +1,81 @@
 import os
+import re
 import json
+import random
 import asyncio
 import urllib.parse
-from collections import deque
 import aiohttp
 from aiohttp import web
+import instaloader
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "9218204780:AAFnj7zZ6JcY90xXCVKzB-fcX2cHxE19_ss")
 TARGET_CHANNEL_ID = os.environ.get("TARGET_CHANNEL_ID", "-1004468017163")
 PORT = int(os.environ.get("PORT", "10000"))
+INSTA_SESSION_ID = os.environ.get("INSTA_SESSION_ID", "")
 
-HISTORY_FILE = "posted_pins.txt"
+# Persistent History Files (Anti-Duplicate Guarantee)
+PIN_HISTORY_FILE = "posted_pins.txt"
+STREAM_HISTORY_FILE = "posted_streams.txt"
+INSTA_HISTORY_FILE = "posted_insta.txt"
 
-# 40+ High-Converting Viral Desi Dance, Saree, Bhabhi & Lookbook Keywords
-SEED_KEYWORDS = [
-    # Viral Dance & Thumka Moves
-    "Desi hot dance reels",
-    "Desi bhabhi viral dance reels",
-    "Desi bhabhi room dance reels",
-    "Desi girl belly dance saree",
-    "Desi thumka dance saree reels",
-    "Desi kamar dance reels",
-    "Desi hot reel sound dance",
-
-    # Low-Waist, Pallu & Saree Draping
-    "Desi low waist saree draping reels",
-    "Saree low waist thong aesthetic",
-    "Desi saree pallu drop transition",
-    "Desi transparent saree lookbook",
-    "Desi saree backless dori reels",
-    "Desi navel show saree reels",
-    "Saree draping style bold reels",
-    "Desi chiffon saree bold look",
-    "Desi saree walk slowmo reels",
-
-    # Curvy Figures, Blouse & Cleavage Styling
-    "Desi hourglass figure saree transition",
-    "Desi deep cleavage blouse reels",
-    "Desi busty curvy aesthetic reels",
-    "Desi deep neck blouse styling",
-    "Desi curvy figure walk reels",
-    "Desi backless choli bold reels",
-    "Desi sleeveless blouse saree look",
-    "Desi crop top backless choli reels",
-
-    # Curvy Bhabhi & Mature Aesthetic
-    "Desi curvy bhabhi saree reels",
-    "Desi chubby bhabhi saree lookbook",
-    "Desi aunty curvy saree reels",
-    "Desi mature bhabhi styling reels",
-    "Desi kaamwali saree aesthetic reels",
-    "Desi bhabhi home styling reels",
-    "Desi bhabhi night saree reels",
-
-    # Lingerie, Nightwear & Bedroom Lookbooks
-    "Desi bold bedroom lookbook haul",
-    "Desi lingerie try on haul reels",
-    "Desi bikini lookbook haul reels",
-    "Desi satin nighty bold reels",
-    "Desi mini dress clubbing baddie",
-    "Desi crop top low waist dance",
-    "Desi towel transition reels",
-    "Desi gym baddie tight outfit",
-    "College farewell bold saree look",
-    "Desi salwar suit backless styling"
+# Target Instagram IDs (Latest to Oldest)
+TARGET_INSTA_ACCOUNTS = [
+    "ur_wildcat",
+    "mayaa_russian",
+    "_sofi_russian"
 ]
 
-def load_posted():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r") as f:
+# Pinterest Seed Keywords (Screenshot Matching Aesthetics)
+SEED_KEYWORDS = [
+    "backless baddie",
+    "backless baddie reels",
+    "desi backless dori blouse reels",
+    "backless saree aesthetic reels",
+    "desi deep backless choli",
+    "backless halter neck reels",
+    "desi saree backless walk reels",
+    "waist chain aesthetic reels",
+    "belly chain baddie reels",
+    "desi low waist saree draping reels",
+    "saree low waist thong aesthetic",
+    "desi navel show saree reels",
+    "desi saree pallu drop transition",
+    "desi transparent saree lookbook",
+    "bodycon mini dress baddie reels",
+    "desi tight dress transition reels",
+    "desi bold bedroom lookbook haul",
+    "desi satin nighty bold reels",
+    "desi lingerie try on haul reels",
+    "desi bikini lookbook haul reels",
+    "gym baddie workout reels",
+    "gym tight outfit reels",
+    "desi hot dance reels",
+    "desi bhabhi room dance reels",
+    "desi thumka dance saree reels",
+    "desi kamar dance reels",
+    "desi hourglass figure saree transition",
+    "desi deep cleavage blouse reels",
+    "desi busty curvy aesthetic reels",
+    "desi curvy figure walk reels",
+    "desi bhabhi viral dance reels",
+    "desi chubby bhabhi saree lookbook"
+]
+
+def load_history(filepath):
+    if os.path.exists(filepath):
+        with open(filepath, "r") as f:
             return set(line.strip() for line in f if line.strip())
     return set()
 
-def save_posted(pin_id):
-    with open(HISTORY_FILE, "a") as f:
-        f.write(f"{pin_id}\n")
+def append_history(filepath, item):
+    with open(filepath, "a") as f:
+        f.write(f"{item}\n")
+
+def extract_stream_signature(url: str) -> str:
+    match = re.search(r"/([^/?#]+\.mp4)", url)
+    if match:
+        return match.group(1)
+    return url.split("?")[0][-40:]
 
 def get_csrf(session: aiohttp.ClientSession) -> str:
     for c in session.cookie_jar:
@@ -82,8 +83,23 @@ def get_csrf(session: aiohttp.ClientSession) -> str:
             return c.value
     return ""
 
+def init_instaloader():
+    L = instaloader.Instaloader(
+        download_pictures=False,
+        download_videos=False,
+        download_video_thumbnails=False,
+        download_geotags=False,
+        download_comments=False,
+        save_metadata=False,
+        compress_json=False
+    )
+    if INSTA_SESSION_ID:
+        L.context._session.cookies.set("sessionid", INSTA_SESSION_ID, domain=".instagram.com")
+        print("🔑 Instagram Session Cookie Loaded!", flush=True)
+    return L
+
 def extract_video_and_thumb(pin):
-    """MP4 Video (>=8s) + Cover Image extractor"""
+    """Pinterest Parser: Strictly MP4 Video (>= 8s) + Cover Image"""
     raw_duration = None
     if "videos" in pin and isinstance(pin["videos"], dict):
         raw_duration = pin["videos"].get("duration")
@@ -108,6 +124,8 @@ def extract_video_and_thumb(pin):
                 find_video_lists(item)
 
     find_video_lists(pin)
+    if not found_videos:
+        return None, None, None
 
     for v_list in found_videos:
         best_url = None
@@ -123,7 +141,6 @@ def extract_video_and_thumb(pin):
                     break
         
         if best_url:
-            # Strictly Filter: Minimum 8 Seconds
             if raw_duration:
                 try:
                     dur = float(raw_duration)
@@ -134,20 +151,21 @@ def extract_video_and_thumb(pin):
                 except Exception:
                     pass
 
-            title = pin.get("title") or pin.get("grid_title") or "Viral Desi Reel"
+            title = pin.get("title") or pin.get("grid_title") or "Viral Baddie Reel"
             return best_url, thumb_url, title
 
     return None, None, None
 
-async def fetch_search_pins(session: aiohttp.ClientSession, keyword: str):
+async def fetch_pinterest_search(session: aiohttp.ClientSession, keyword: str, bookmark: str = None):
     csrf = get_csrf(session)
     source_url = f"/search/pins/?q={urllib.parse.quote(keyword)}"
+    options = {"query": keyword, "scope": "pins", "page_size": 60}
+    if bookmark:
+        options["bookmarks"] = [bookmark]
+
     params = {
         "source_url": source_url,
-        "data": json.dumps({
-            "options": {"query": keyword, "scope": "pins", "page_size": 60},
-            "context": {}
-        })
+        "data": json.dumps({"options": options, "context": {}})
     }
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
@@ -165,20 +183,19 @@ async def fetch_search_pins(session: aiohttp.ClientSession, keyword: str):
         async with session.get(url, params=params, headers=headers, timeout=25) as resp:
             if resp.status == 200:
                 data = await resp.json()
-                return data.get("resource_response", {}).get("data", {}).get("results", [])
+                results = data.get("resource_response", {}).get("data", {}).get("results", [])
+                next_bm = data.get("resource_response", {}).get("bookmark")
+                return results, next_bm
     except Exception as e:
-        print(f"⚠️ Search error for '{keyword}': {e}", flush=True)
-    return []
+        print(f"⚠️ Pinterest search error for '{keyword}': {e}", flush=True)
+    return [], None
 
-async def fetch_related_pins(session: aiohttp.ClientSession, pin_id: str):
+async def fetch_pinterest_related(session: aiohttp.ClientSession, pin_id: str):
     csrf = get_csrf(session)
     source_url = f"/pin/{pin_id}/"
     params = {
         "source_url": source_url,
-        "data": json.dumps({
-            "options": {"pin_id": str(pin_id), "page_size": 50},
-            "context": {}
-        })
+        "data": json.dumps({"options": {"pin_id": str(pin_id), "page_size": 50}, "context": {}})
     }
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
@@ -198,8 +215,28 @@ async def fetch_related_pins(session: aiohttp.ClientSession, pin_id: str):
                 data = await resp.json()
                 return data.get("resource_response", {}).get("data", {}).get("results", [])
     except Exception as e:
-        print(f"⚠️ Related fetch error for Pin {pin_id}: {e}", flush=True)
+        print(f"⚠️ Pinterest related error on Pin {pin_id}: {e}", flush=True)
     return []
+
+def fetch_insta_posts_sync(L, username: str):
+    """Instagram Profile: Latest to Oldest, strictly Video Reels >= 8s"""
+    reels = []
+    try:
+        profile = instaloader.Profile.from_username(L.context, username)
+        for post in profile.get_posts():
+            if post.is_video:
+                if post.video_duration and post.video_duration < 8.0:
+                    continue
+                reels.append({
+                    "shortcode": post.shortcode,
+                    "video_url": post.video_url,
+                    "thumb_url": post.url,
+                    "caption": post.caption or "",
+                    "user": username
+                })
+    except Exception as e:
+        print(f"⚠️ Instagram fetch error on @{username}: {e}", flush=True)
+    return reels
 
 async def download_file(session: aiohttp.ClientSession, url: str, filename: str, min_size: int = 1000) -> bool:
     try:
@@ -241,70 +278,136 @@ async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, thum
         print(f"⚠️ Telegram upload error: {e}", flush=True)
         return False
 
-# Shared Producer-Consumer Async Queue
-video_queue = asyncio.Queue(maxsize=120)
-spider_history_set = set()
+# Unified Deduplication & Shared Queues
+seen_pins = set()
+seen_streams = set()
+seen_insta = set()
 
-async def producer_spider(session: aiohttp.ClientSession):
-    """24x7 Non-stop Harvester: Ensures the queue never runs out of videos"""
-    posted = load_posted()
-    spider_history_set.update(posted)
+upload_queue = asyncio.Queue(maxsize=300)
+pinterest_spider_queue = asyncio.Queue(maxsize=5000)
 
-    print("🟢 Producer Spider Engine Started!", flush=True)
+async def register_pinterest_pins(pins: list):
+    for p in pins:
+        pid = str(p.get("id"))
+        if not pid or pid in seen_pins:
+            continue
+        seen_pins.add(pid)
+
+        v_url, t_url, title = extract_video_and_thumb(p)
+        if v_url:
+            sig = extract_stream_signature(v_url)
+            if sig in seen_streams:
+                continue
+            seen_streams.add(sig)
+
+            if not upload_queue.full():
+                await upload_queue.put({
+                    "source": "pinterest",
+                    "id": pid,
+                    "sig": sig,
+                    "video_url": v_url,
+                    "thumb_url": t_url,
+                    "title": title
+                })
+
+        if not pinterest_spider_queue.full():
+            await pinterest_spider_queue.put(pid)
+
+async def producer_pinterest_search(session: aiohttp.ClientSession):
+    """Producer 1: Continuous Pinterest Search across 30+ Baddie Keywords"""
+    print("🟢 Pinterest Search Producer Active!", flush=True)
+    bookmarks = {kw: None for kw in SEED_KEYWORDS}
 
     while True:
-        for kw in SEED_KEYWORDS:
-            # Queue bhar gaya ho toh hold karein, khaali hone par instant refill
-            if video_queue.qsize() > 80:
+        shuffled = list(SEED_KEYWORDS)
+        random.shuffle(shuffled)
+
+        for kw in shuffled:
+            if upload_queue.qsize() > 150:
                 await asyncio.sleep(5)
                 continue
 
-            pins = await fetch_search_pins(session, kw)
-            for p in pins:
-                pid = str(p.get("id"))
-                if pid and pid not in spider_history_set:
-                    spider_history_set.add(pid)
-                    v_url, t_url, title = extract_video_and_thumb(p)
-                    if v_url:
-                        await video_queue.put({
-                            "id": pid,
-                            "video_url": v_url,
-                            "thumb_url": t_url,
-                            "title": title
-                        })
+            bm = bookmarks.get(kw)
+            pins, next_bm = await fetch_pinterest_search(session, kw, bm)
 
-                        # Har valid video pin se related recommendations crawl karein
-                        related = await fetch_related_pins(session, pid)
-                        for rp in related:
-                            r_id = str(rp.get("id"))
-                            if r_id and r_id not in spider_history_set:
-                                spider_history_set.add(r_id)
-                                rv_url, rt_url, r_title = extract_video_and_thumb(rp)
-                                if rv_url:
-                                    await video_queue.put({
-                                        "id": r_id,
-                                        "video_url": rv_url,
-                                        "thumb_url": rt_url,
-                                        "title": r_title
-                                    })
+            if pins:
+                await register_pinterest_pins(pins)
 
-            await asyncio.sleep(1.5)
+            if not next_bm or next_bm == "-end-" or next_bm == bm:
+                bookmarks[kw] = None
+            else:
+                bookmarks[kw] = next_bm
 
-async def consumer_uploader(session: aiohttp.ClientSession):
-    """Maximum Speed Uploader: Consumes queue items at Telegram's fastest safe limit"""
-    posted = load_posted()
-    print("🟢 Consumer Uploader Engine Started!", flush=True)
+            await asyncio.sleep(2.0)
+
+        await asyncio.sleep(5)
+
+async def producer_pinterest_spider(session: aiohttp.ClientSession):
+    """Producer 2: Infinite Related Pins Spider"""
+    print("🟢 Pinterest Spider Producer Active!", flush=True)
 
     while True:
-        item = await video_queue.get()
-        pid = item["id"]
+        try:
+            pid = await asyncio.wait_for(pinterest_spider_queue.get(), timeout=8.0)
+            related = await fetch_pinterest_related(session, pid)
+            if related:
+                await register_pinterest_pins(related)
+            pinterest_spider_queue.task_done()
+            await asyncio.sleep(1.0)
+        except asyncio.TimeoutError:
+            await asyncio.sleep(3)
+        except Exception as e:
+            print(f"⚠️ Spider crawler error: {e}", flush=True)
+            await asyncio.sleep(2)
 
-        if pid in posted:
-            video_queue.task_done()
-            continue
+async def producer_instagram():
+    """Producer 3: Scrapes ur_wildcat, mayaa_russian, _sofi_russian from Newest to Oldest"""
+    print("🟢 Instagram Harvester Producer Active!", flush=True)
+    L = init_instaloader()
 
-        temp_video = f"pin_{pid}.mp4"
-        temp_thumb = f"thumb_{pid}.jpg"
+    while True:
+        for user in TARGET_INSTA_ACCOUNTS:
+            print(f"🔎 Scanning Instagram Profile: @{user}...", flush=True)
+            loop = asyncio.get_running_loop()
+            reels = await loop.run_in_executor(None, fetch_insta_posts_sync, L, user)
+
+            new_reels = 0
+            for r in reels:
+                code = r["shortcode"]
+                if code in seen_insta:
+                    continue
+                seen_insta.add(code)
+
+                if not upload_queue.full():
+                    await upload_queue.put({
+                        "source": "instagram",
+                        "id": code,
+                        "sig": code,
+                        "video_url": r["video_url"],
+                        "thumb_url": r["thumb_url"],
+                        "title": r["caption"],
+                        "user": r["user"]
+                    })
+                    new_reels += 1
+
+            print(f"🎯 @{user}: Queued {new_reels} fresh reels.", flush=True)
+            await asyncio.sleep(8)
+
+        print("💤 Instagram accounts cycle complete. Waiting 10 minutes...", flush=True)
+        await asyncio.sleep(600)
+
+async def unified_consumer_uploader(session: aiohttp.ClientSession):
+    """Unified Consumer: Posts both Pinterest and Instagram reels into the target channel at top safe speed"""
+    print("🟢 Unified Channel Uploader Active (Max Safe Speed)!", flush=True)
+
+    while True:
+        item = await upload_queue.get()
+        source = item["source"]
+        item_id = item["id"]
+        sig = item["sig"]
+
+        temp_video = f"{source}_{item_id}.mp4"
+        temp_thumb = f"{source}_thumb_{item_id}.jpg"
 
         v_ok = await download_file(session, item["video_url"], temp_video, min_size=80000)
         t_ok = False
@@ -312,31 +415,39 @@ async def consumer_uploader(session: aiohttp.ClientSession):
             t_ok = await download_file(session, item["thumb_url"], temp_thumb, min_size=2000)
 
         if v_ok:
-            caption = (
-                f"✨ <b>{item['title'][:65]}</b>\n\n"
-                f"🔥 <b>#ViralDance #DesiBaddie #HotReels #Saree</b>\n"
-                f"👑 <b>Join:</b> @InstagramPremiumCollection"
-            )
+            if source == "instagram":
+                caption = (
+                    f"✨ <b>Exclusive Instagram Reel</b>\n\n"
+                    f"🔥 <b>#{item.get('user', 'Baddie')} #InstagramReels #ViralDance #Hot</b>\n"
+                    f"👑 <b>Join:</b> @InstagramPremiumCollection"
+                )
+            else:
+                clean_title = re.sub(r'https?://\S+', '', item['title']).strip()[:65]
+                caption = (
+                    f"✨ <b>{clean_title if clean_title else 'Exclusive Desi Baddie Reel'}</b>\n\n"
+                    f"🔥 <b>#BacklessBaddie #SareeCurves #ViralReels #Desi</b>\n"
+                    f"👑 <b>Join:</b> @InstagramPremiumCollection"
+                )
 
             uploaded = await send_to_telegram(session, temp_video, temp_thumb if t_ok else None, caption)
             if uploaded:
-                print(f"🚀 [Speed Delivery] Pin {pid} Posted to Channel! (Queue remaining: {video_queue.qsize()})", flush=True)
-                save_posted(pid)
-                posted.add(pid)
+                print(f"🚀 [Posted {source.upper()}] ID: {item_id} | Queue Remaining: {upload_queue.qsize()}", flush=True)
+                if source == "instagram":
+                    append_history(INSTA_HISTORY_FILE, item_id)
+                else:
+                    append_history(PIN_HISTORY_FILE, item_id)
+                    append_history(STREAM_HISTORY_FILE, sig)
 
-        # Cleanup disk
         if os.path.exists(temp_video):
             os.remove(temp_video)
         if os.path.exists(temp_thumb):
             os.remove(temp_thumb)
 
-        video_queue.task_done()
-
-        # Maximum speed: 1.5 seconds between uploads (avoids Telegram 429 FloodWait)
-        await asyncio.sleep(1.5)
+        upload_queue.task_done()
+        await asyncio.sleep(1.8)  # Maximum safe Telegram interval
 
 async def handle_ping(request):
-    return web.Response(text="24x7 Ultra-Speed Engine Active!")
+    return web.Response(text="Dual Engine (Pinterest + Instagram) Active 24/7!")
 
 async def start_app():
     app = web.Application()
@@ -345,7 +456,13 @@ async def start_app():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"🌐 Keep-Alive Server active on {PORT}", flush=True)
+    print(f"🌐 Keep-Alive Web Server active on port {PORT}", flush=True)
+
+    # Load all persistent histories
+    seen_pins.update(load_history(PIN_HISTORY_FILE))
+    seen_streams.update(load_history(STREAM_HISTORY_FILE))
+    seen_insta.update(load_history(INSTA_HISTORY_FILE))
+    print(f"📋 Loaded {len(seen_pins)} Pins, {len(seen_streams)} Streams, and {len(seen_insta)} Instagram Reels from history.", flush=True)
 
     async with aiohttp.ClientSession() as session:
         try:
@@ -353,10 +470,12 @@ async def start_app():
         except Exception:
             pass
 
-        # Producer & Consumer running concurrently in background
+        # 4 Concurrent Coroutines: 3 Producers + 1 High-Speed Consumer
         await asyncio.gather(
-            producer_spider(session),
-            consumer_uploader(session)
+            producer_pinterest_search(session),
+            producer_pinterest_spider(session),
+            producer_instagram(),
+            unified_consumer_uploader(session)
         )
 
 if __name__ == "__main__":
