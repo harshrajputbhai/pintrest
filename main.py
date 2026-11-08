@@ -1,7 +1,15 @@
 import os
 import json
-import asyncio
 import urllib.parse
+import asyncio
+
+# Render Python 3.12+ / 3.14 Event Loop Crash Fix
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
 import aiohttp
 from aiohttp import web
 import pyrogram.utils
@@ -25,6 +33,8 @@ pyrogram.utils.get_peer_type = patched_get_peer_type
 API_ID = int(os.environ.get("API_ID", "37025158"))
 API_HASH = os.environ.get("API_HASH", "4bfdef0d097d4d7d97d5b61a077a0962")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "9218204780:AAFnj7zZ6JcY90xXCVKzB-fcX2cHxE19_ss")
+
+# Aapka Target Channel ID (Reels seedha is channel me jayengi)
 TARGET_CHANNEL_ID = int(os.environ.get("TARGET_CHANNEL_ID", "-1004468017163"))
 PORT = int(os.environ.get("PORT", "8080"))
 
@@ -67,7 +77,6 @@ def save_posted_id(pin_id):
         f.write(f"{pin_id}\n")
 
 async def fetch_pinterest_page(session: aiohttp.ClientSession, keyword: str, bookmark: str = None):
-    """Pinterest se current page ke video pins aur agle page ka bookmark extract karein"""
     url = "https://www.pinterest.com/resource/BaseSearchResource/get/"
     options = {
         "query": keyword,
@@ -134,7 +143,7 @@ async def download_file(session: aiohttp.ClientSession, url: str, filename: str)
 
 async def infinite_reels_pipeline():
     await bot.start()
-    print("🟢 Bot Online! Pinterest Unlimited Deep Pipeline Shuru...")
+    print(f"🟢 Bot Online! Targeting Channel: {TARGET_CHANNEL_ID}")
 
     async with aiohttp.ClientSession() as session:
         while True:
@@ -142,28 +151,20 @@ async def infinite_reels_pipeline():
             print(f"📋 Record: Total {len(posted_ids)} reels pehle se posted hain.")
 
             for keyword in KEYWORDS:
-                print(f"\n==========================================")
-                print(f"🔥 Scanning Keyword: '{keyword}'")
-                print(f"==========================================")
-                
+                print(f"\n🔥 Scanning Keyword: '{keyword}'")
                 bookmark = None
                 page_no = 1
                 consecutive_empty = 0
 
-                # Jab tak keyword ki saari videos khatam na ho jayein, next page fetch karega
                 while True:
-                    print(f"📄 Fetching Page {page_no} for '{keyword}'...")
                     video_pins, next_bookmark = await fetch_pinterest_page(session, keyword, bookmark)
 
                     if not video_pins:
                         consecutive_empty += 1
                         if consecutive_empty >= 2 or not next_bookmark or next_bookmark == "-end-":
-                            print(f"🏁 '{keyword}' ke sabhi videos download/check ho gaye.")
                             break
                     else:
                         consecutive_empty = 0
-
-                    print(f"🎯 Page {page_no} par {len(video_pins)} videos mili.")
 
                     for pin in video_pins:
                         pin_id = pin["id"]
@@ -182,13 +183,14 @@ async def infinite_reels_pipeline():
 
                             while True:
                                 try:
+                                    # Post directly to your Channel -1004468017163
                                     await bot.send_video(
                                         chat_id=TARGET_CHANNEL_ID,
                                         video=temp_file,
                                         caption=caption,
                                         parse_mode=enums.ParseMode.HTML
                                     )
-                                    print(f"✅ Posted Pin ID {pin_id} to Channel!")
+                                    print(f"✅ Posted Pin ID {pin_id} to Channel {TARGET_CHANNEL_ID}!")
                                     save_posted_id(pin_id)
                                     posted_ids.add(pin_id)
                                     break
@@ -202,29 +204,24 @@ async def infinite_reels_pipeline():
                             if os.path.exists(temp_file):
                                 os.remove(temp_file)
 
-                            # FloodWait se bachne ke liye safe gap
                             await asyncio.sleep(8)
 
-                    # Agar next page ka bookmark nahi hai to agle keyword par move karein
                     if not next_bookmark or next_bookmark == "-end-" or next_bookmark == bookmark:
-                        print(f"🏁 '{keyword}' ka aakhiri page complete ho gaya.")
                         break
 
                     bookmark = next_bookmark
                     page_no += 1
                     await asyncio.sleep(3)
 
-                await asyncio.sleep(5)
+                await asyncio.sleep(4)
 
-            print("\n💤 Sabhi keywords ke saare pages exhaust ho gaye.")
-            print("⏳ 10 minute me naye reels ke liye dobara check karega...")
+            print("💤 Sabhi keywords complete. Waiting 10 minutes...")
             await asyncio.sleep(600)
 
 async def handle_ping(request):
     return web.Response(text="Reels Automation Bot 24x7 Active!")
 
 async def main():
-    # Render keep-alive dummy web server
     app = web.Application()
     app.router.add_get("/", handle_ping)
     runner = web.AppRunner(app)
