@@ -1,10 +1,10 @@
 import os
 import re
-import json
 import asyncio
 import urllib.parse
 import aiohttp
 from aiohttp import web
+import yt_dlp
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "9218204780:AAFnj7zZ6JcY90xXCVKzB-fcX2cHxE19_ss")
 TARGET_CHANNEL_ID = os.environ.get("TARGET_CHANNEL_ID", "-1004468017163")
@@ -46,90 +46,76 @@ def save_posted(pin_id):
     with open(HISTORY_FILE, "a") as f:
         f.write(f"{pin_id}\n")
 
-async def test_telegram_channel(session: aiohttp.ClientSession):
+async def test_telegram(session: aiohttp.ClientSession):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TARGET_CHANNEL_ID,
-        "text": "🟢 <b>Pinterest Reels Bot Active!</b>\nScraping high-quality reels...",
+        "text": "🟢 <b>Pinterest Engine Live!</b>\nSearching & downloading keyword reels...",
         "parse_mode": "HTML"
     }
     try:
-        async with session.post(url, json=payload, timeout=15) as resp:
-            data = await resp.json()
+        async with session.post(url, json=payload, timeout=15) as r:
+            data = await r.json()
             if data.get("ok"):
-                print("✅ Telegram Connected to Channel Successfully!", flush=True)
+                print("✅ Telegram Connected Successfully!", flush=True)
                 return True
             else:
                 print(f"❌ Telegram Error: {data.get('description')}", flush=True)
-                return False
     except Exception as e:
-        print(f"❌ Connection Error: {e}", flush=True)
-        return False
+        print(f"❌ Telegram Test Error: {e}", flush=True)
+    return False
 
-def extract_pinterest_mp4_links(html: str) -> list:
-    """Pinterest page HTML aur JSON ke andar se raw video streams extract karein"""
-    clean_html = html.replace(r"\/", "/")
-    
-    # 1. Direct 720p / 480p / Exp mp4 links
-    mp4_urls = re.findall(r'https://[a-zA-Z0-9./_-]+(?:videos|v1\.pinimg\.com)[a-zA-Z0-9./_-]+\.mp4', clean_html)
-    
-    # 2. General fallback for any pinimg mp4
-    if not mp4_urls:
-        mp4_urls = re.findall(r'https://v\d?\.pinimg\.com/[^"\'\s<>]+\.mp4', clean_html)
-
-    unique_urls = list(set(mp4_urls))
-    videos = []
-    for u in unique_urls:
-        # Unique ID based on hash
-        pin_id = str(abs(hash(u)) % 1000000000)
-        videos.append({
-            "id": pin_id,
-            "video_url": u
-        })
-    return videos
-
-async def fetch_pinterest_keyword_videos(session: aiohttp.ClientSession, keyword: str):
-    search_query = f"{keyword} reels video"
-    url = f"https://www.pinterest.com/search/pins/?q={urllib.parse.quote(search_query)}"
-    
+async def get_pinterest_pins_for_keyword(session: aiohttp.ClientSession, keyword: str) -> list:
+    """DuckDuckGo se Pinterest ke actual video pin links extract karein"""
+    query = f"site:pinterest.com/pin/ {keyword} video"
+    url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Sec-Ch-Ua": '"Chromium";v="128", "Not;A=Brand";v="24"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    }
+
+    pin_ids = []
+    try:
+        async with session.get(url, headers=headers, timeout=20) as r:
+            if r.status == 200:
+                html = await r.text()
+                # Pinterest Pin IDs dhoondhein (12-19 digits)
+                matches = re.findall(r"pinterest\.com/pin/(\d+)", html)
+                for pid in matches:
+                    if pid not in pin_ids:
+                        pin_ids.append(pid)
+    except Exception as e:
+        print(f"⚠️ Search fetch failed for '{keyword}': {e}", flush=True)
+
+    return pin_ids
+
+def download_pinterest_video(pin_id: str) -> str:
+    """yt-dlp ke native Pinterest extractor se video download karein"""
+    url = f"https://www.pinterest.com/pin/{pin_id}/"
+    output_filename = f"pin_{pin_id}.mp4"
+
+    ydl_opts = {
+        "outtmpl": output_filename,
+        "format": "bestvideo+bestaudio/best",
+        "quiet": True,
+        "no_warnings": True,
+        "socket_timeout": 30
     }
 
     try:
-        async with session.get(url, headers=headers, timeout=30) as resp:
-            print(f"📡 Pinterest Web Fetch: {resp.status} for '{keyword}'", flush=True)
-            if resp.status == 200:
-                html = await resp.text()
-                videos = extract_pinterest_mp4_links(html)
-                return videos
-    except Exception as e:
-        print(f"⚠️ Search error for '{keyword}': {e}", flush=True)
-    return []
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
 
-async def download_file(session: aiohttp.ClientSession, url: str, filename: str) -> bool:
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    try:
-        async with session.get(url, headers=headers, timeout=45) as resp:
-            if resp.status == 200:
-                with open(filename, "wb") as f:
-                    f.write(await resp.read())
-                return os.path.exists(filename) and os.path.getsize(filename) > 40000
-    except Exception as e:
-        print(f"⚠️ Download failed: {e}", flush=True)
-    return False
+        if os.path.exists(output_filename) and os.path.getsize(output_filename) > 30000:
+            return output_filename
+    except Exception:
+        # Pin video nahi hai (sirf image hai) ya private hai
+        if os.path.exists(output_filename):
+            os.remove(output_filename)
+    return None
 
-async def send_video_to_telegram(session: aiohttp.ClientSession, video_path: str, caption: str) -> bool:
-    telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo"
+async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, caption: str) -> bool:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo"
     try:
         data = aiohttp.FormData()
         data.add_field("chat_id", str(TARGET_CHANNEL_ID))
@@ -143,72 +129,72 @@ async def send_video_to_telegram(session: aiohttp.ClientSession, video_path: str
             content_type="video/mp4"
         )
 
-        async with session.post(telegram_url, data=data, timeout=120) as resp:
+        async with session.post(url, data=data, timeout=120) as resp:
             res = await resp.json()
-            if res.get("ok"):
-                return True
-            else:
-                print(f"❌ Telegram API Error: {res.get('description')}", flush=True)
-                return False
+            return res.get("ok", False)
     except Exception as e:
         print(f"⚠️ Upload Error: {e}", flush=True)
         return False
 
-async def main_worker():
-    print(f"🟢 Pipeline Engine Live for Channel: {TARGET_CHANNEL_ID}", flush=True)
+async def main_pipeline():
+    print(f"🟢 Starting Pinterest Engine for Channel: {TARGET_CHANNEL_ID}", flush=True)
 
     async with aiohttp.ClientSession() as session:
-        await test_telegram_channel(session)
+        await test_telegram(session)
 
         while True:
             posted = load_posted()
-            print(f"📋 Record: {len(posted)} videos pehle se posted hain.", flush=True)
+            print(f"📋 Total {len(posted)} pins already processed.", flush=True)
 
             for keyword in KEYWORDS:
                 print(f"\n==========================================", flush=True)
-                print(f"🔥 Scanning Keyword: '{keyword}'", flush=True)
+                print(f"🔥 Searching Pinterest for: '{keyword}'", flush=True)
                 print(f"==========================================", flush=True)
 
-                videos = await fetch_pinterest_keyword_videos(session, keyword)
-                print(f"🎯 Found {len(videos)} video reels for '{keyword}'", flush=True)
+                pins = await get_pinterest_pins_for_keyword(session, keyword)
+                print(f"🎯 Found {len(pins)} Pinterest Pins for '{keyword}'", flush=True)
 
-                for v in videos:
-                    pin_id = v["id"]
-                    if pin_id in posted:
+                for pid in pins:
+                    if pid in posted:
                         continue
 
-                    temp_name = f"reel_{pin_id}.mp4"
-                    print(f"⬇️ Downloading: {pin_id}...", flush=True)
-                    success = await download_file(session, v["video_url"], temp_name)
+                    # yt-dlp running in async executor to avoid blocking the event loop
+                    loop = asyncio.get_event_loop()
+                    video_file = await loop.run_in_executor(None, download_pinterest_video, pid)
 
-                    if success:
+                    if video_file:
+                        print(f"✅ Video Downloaded: Pin {pid}", flush=True)
                         caption = (
                             f"✨ <b>Viral Reel: {keyword}</b>\n\n"
-                            f"🔥 <i>#{keyword.replace(' ', '_')} #Baddie</i>\n"
+                            f"🔥 <i>#{keyword.replace(' ', '_')} #PinterestReels</i>\n"
                             f"👑 <b>Join:</b> @InstagramPremiumCollection"
                         )
-                        print(f"📤 Uploading to Telegram Channel...", flush=True)
-                        uploaded = await send_video_to_telegram(session, temp_name, caption)
-                        if uploaded:
-                            print(f"✅ Video Sent Successfully: {pin_id}", flush=True)
-                            save_posted(pin_id)
-                            posted.add(pin_id)
 
-                        if os.path.exists(temp_name):
-                            os.remove(temp_name)
+                        print(f"📤 Uploading Pin {pid} to Telegram...", flush=True)
+                        sent = await send_to_telegram(session, video_file, caption)
+                        if sent:
+                            print(f"🚀 Delivered Pin {pid} to Channel!", flush=True)
+                            save_posted(pid)
+                            posted.add(pid)
 
-                        await asyncio.sleep(12)
+                        if os.path.exists(video_file):
+                            os.remove(video_file)
 
-                await asyncio.sleep(5)
+                        await asyncio.sleep(12)  # Delay between uploads
+                    else:
+                        # Image pin thi, record kar liya taaki bar-bar download na try kare
+                        save_posted(pid)
+                        posted.add(pid)
 
-            print("💤 Saare keywords complete. 10 minute me naya scan shuru hoga...", flush=True)
-            await asyncio.sleep(600)
+                await asyncio.sleep(6)
+
+            print("💤 Sabhi keywords complete. Waiting 15 minutes for fresh pins...", flush=True)
+            await asyncio.sleep(900)
 
 async def handle_ping(request):
-    return web.Response(text="Bot Live 24/7!")
+    return web.Response(text="Pinterest Video Scraper Active 24/7!")
 
 async def start_app():
-    # Web server on port 10000 for Render
     app = web.Application()
     app.router.add_get("/", handle_ping)
     runner = web.AppRunner(app)
@@ -217,7 +203,7 @@ async def start_app():
     await site.start()
     print(f"🌐 Keep-Alive Web Server active on port {PORT}", flush=True)
 
-    await main_worker()
+    await main_pipeline()
 
 if __name__ == "__main__":
     asyncio.run(start_app())
