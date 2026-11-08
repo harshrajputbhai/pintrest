@@ -11,29 +11,29 @@ PORT = int(os.environ.get("PORT", "10000"))
 
 HISTORY_FILE = "posted_pins.txt"
 
-# Direct Keywords (Bina kisi extra text ya # ke search honge)
+# 100% Strictly Indian & Desi Keywords (No Foreign Models)
 KEYWORDS = [
-    "Baddie",
-    "Desi Baddie",
-    "Baddie Bhabhi",
-    "Bold Beauty",
-    "Bold lookbook reels",
-    "Attitude baddie reels",
-    "Desi aesthetic baddie",
-    "Hot Reels",
-    "Hot Bhabhi",
-    "Sexy Vibes",
-    "Glamour Girl",
-    "Hot Desi Reels",
-    "18+ Trending Reels",
-    "Hot reels Instagram ideas",
-    "Desi glam vibes",
-    "Hot aesthetic transitions",
+    "Indian Baddie",
+    "Desi Baddie reels",
+    "Desi girl saree transition",
+    "Indian Bhabhi reels",
+    "Indian aesthetic baddie",
+    "Desi bold lookbook",
+    "Indian hot reels",
     "Saree baddie aesthetic",
-    "Ethnic bold styling",
+    "Indian ethnic bold styling",
     "Saree low waist styling reels",
-    "Saree backless blouse aesthetic",
-    "Desi girl saree transition reels"
+    "Saree backless blouse reels",
+    "Indian girl attitude reels",
+    "Desi glam vibes reels",
+    "Indian traditional saree transition",
+    "Desi beauty reels",
+    "Indian model reels",
+    "Desi salwar baddie reels",
+    "Indian saree fashion reels",
+    "Desi bhabhi saree style",
+    "Indian viral transition reels",
+    "Desi girl aesthetic lookbook"
 ]
 
 def load_posted():
@@ -53,18 +53,15 @@ def get_csrf(session: aiohttp.ClientSession) -> str:
     return ""
 
 def extract_video_and_thumb(pin, fallback_title):
-    """Pinterest Standard Video Pins aur Idea Pins (Reels) dono se video + real thumbnail extract karein"""
     found_videos = []
     thumb_url = None
 
-    # Cover Thumbnail dhoondhein
     images = pin.get("images", {})
     for res in ["736x", "orig", "474x", "170x"]:
         if res in images and isinstance(images[res], dict) and images[res].get("url"):
             thumb_url = images[res]["url"]
             break
 
-    # Recursively kisi bhi dictionary me video_list dhoondhein (Story pins / standard pins)
     def find_video_lists(obj):
         if isinstance(obj, dict):
             if "video_list" in obj and isinstance(obj["video_list"], dict):
@@ -99,11 +96,10 @@ async def fetch_pinterest_videos(session: aiohttp.ClientSession, keyword: str, b
     clean_keyword = keyword.strip()
     source_url = f"/search/pins/?q={urllib.parse.quote(clean_keyword)}"
     
-    # Direct Keyword Search (No appended 'reels' or '#')
     options = {
         "query": clean_keyword,
         "scope": "pins",
-        "page_size": 25
+        "page_size": 60
     }
     if bookmark:
         options["bookmarks"] = [bookmark]
@@ -128,7 +124,6 @@ async def fetch_pinterest_videos(session: aiohttp.ClientSession, keyword: str, b
 
     try:
         async with session.get(url, params=params, headers=headers, timeout=25) as resp:
-            print(f"📡 Pinterest API Status: {resp.status} for '{clean_keyword}'", flush=True)
             if resp.status == 200:
                 data = await resp.json()
                 results = data.get("resource_response", {}).get("data", {}).get("results", [])
@@ -163,7 +158,6 @@ async def download_file(session: aiohttp.ClientSession, url: str, filename: str,
     return False
 
 async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, thumb_path: str, caption: str) -> bool:
-    """Telegram API upload with Real Cover Thumbnail attached"""
     telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo"
     try:
         data = aiohttp.FormData()
@@ -178,7 +172,6 @@ async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, thum
             content_type="video/mp4"
         )
 
-        # Real cover photo attach karein
         if thumb_path and os.path.exists(thumb_path):
             data.add_field(
                 "thumbnail",
@@ -189,17 +182,13 @@ async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, thum
 
         async with session.post(telegram_url, data=data, timeout=120) as resp:
             res = await resp.json()
-            if res.get("ok"):
-                return True
-            else:
-                print(f"❌ Telegram Error: {res.get('description')}", flush=True)
-                return False
+            return res.get("ok", False)
     except Exception as e:
         print(f"⚠️ Telegram Upload Error: {e}", flush=True)
         return False
 
 async def main_worker():
-    print(f"🟢 Pinterest Pipeline Live for Channel: {TARGET_CHANNEL_ID}", flush=True)
+    print(f"🟢 Strictly Indian Reels Pipeline Active for Channel: {TARGET_CHANNEL_ID}", flush=True)
 
     async with aiohttp.ClientSession() as session:
         try:
@@ -209,19 +198,17 @@ async def main_worker():
 
         while True:
             posted = load_posted()
-            print(f"📋 Record: {len(posted)} reels pehle se posted hain.", flush=True)
+            print(f"📋 Total {len(posted)} Indian reels pehle se posted hain.", flush=True)
 
             for keyword in KEYWORDS:
-                print(f"\n==========================================", flush=True)
-                print(f"🔥 Scanning Pinterest for: '{keyword}'", flush=True)
-                print(f"==========================================", flush=True)
+                print(f"\n🔥 Scanning Pinterest for: '{keyword}'", flush=True)
 
                 bookmark = None
                 page_no = 1
 
                 while True:
                     videos, next_bm = await fetch_pinterest_videos(session, keyword, bookmark)
-                    print(f"🎯 Page {page_no}: Found {len(videos)} video reels.", flush=True)
+                    print(f"🎯 Page {page_no}: Found {len(videos)} Indian video reels.", flush=True)
 
                     if not videos:
                         break
@@ -234,22 +221,19 @@ async def main_worker():
                         temp_video = f"pin_{pin_id}.mp4"
                         temp_thumb = f"thumb_{pin_id}.jpg"
 
-                        print(f"⬇️ Downloading Reel: {pin_id}...", flush=True)
                         v_ok = await download_file(session, v["video_url"], temp_video, min_size=30000)
-
-                        # Real thumbnail download karein
                         t_ok = False
                         if v.get("thumb_url"):
                             t_ok = await download_file(session, v["thumb_url"], temp_thumb, min_size=2000)
 
                         if v_ok:
+                            tag_clean = keyword.replace(" ", "_")
                             caption = (
                                 f"✨ <b>{v['title'][:65]}</b>\n\n"
-                                f"🔥 <b>#Trending #Baddie #ViralReels</b>\n"
+                                f"🔥 <b>#{tag_clean} #DesiReels #IndianBaddie</b>\n"
                                 f"👑 <b>Join:</b> @InstagramPremiumCollection"
                             )
 
-                            print(f"📤 Uploading Reel with HD Thumbnail to Telegram...", flush=True)
                             uploaded = await send_to_telegram(
                                 session,
                                 temp_video,
@@ -258,32 +242,32 @@ async def main_worker():
                             )
 
                             if uploaded:
-                                print(f"🚀 Delivered Pin {pin_id} to Channel!", flush=True)
+                                print(f"🚀 Delivered Indian Pin {pin_id} to Channel!", flush=True)
                                 save_posted(pin_id)
                                 posted.add(pin_id)
 
-                            # Cleanup
                             if os.path.exists(temp_video):
                                 os.remove(temp_video)
                             if os.path.exists(temp_thumb):
                                 os.remove(temp_thumb)
 
-                            await asyncio.sleep(12)  # Safe delay between uploads
+                            # 4 second safe speed gap
+                            await asyncio.sleep(4)
 
                     if not next_bm or next_bm == "-end-" or next_bm == bookmark:
                         break
 
                     bookmark = next_bm
                     page_no += 1
-                    await asyncio.sleep(4)
+                    await asyncio.sleep(2)
 
-                await asyncio.sleep(5)
+                await asyncio.sleep(3)
 
-            print("💤 Saare keywords complete ho gaye. 10 minute me naya round chalega...", flush=True)
-            await asyncio.sleep(600)
+            print("💤 Sabhi Indian keywords complete. 5 minute me naya round shuru hoga...", flush=True)
+            await asyncio.sleep(300)
 
 async def handle_ping(request):
-    return web.Response(text="Pinterest Video Scraper Active 24/7!")
+    return web.Response(text="Indian Reels Bot Active 24/7!")
 
 async def start_app():
     app = web.Application()
