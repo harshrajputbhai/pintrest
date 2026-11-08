@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import urllib.parse
+from collections import deque
 import aiohttp
 from aiohttp import web
 
@@ -11,40 +12,58 @@ PORT = int(os.environ.get("PORT", "10000"))
 
 HISTORY_FILE = "posted_pins.txt"
 
-# 100% Bold Dance, Curves, Low-Waist & Baddie Content (Zero Wedding/Bridal)
-KEYWORDS = [
-    # 1. Viral Desi Dances & Bedroom Moves
+# 40+ High-Converting Viral Desi Dance, Saree, Bhabhi & Lookbook Keywords
+SEED_KEYWORDS = [
+    # Viral Dance & Thumka Moves
     "Desi hot dance reels",
     "Desi bhabhi viral dance reels",
     "Desi bhabhi room dance reels",
-    "Desi girl belly dance saree reels",
+    "Desi girl belly dance saree",
     "Desi thumka dance saree reels",
+    "Desi kamar dance reels",
     "Desi hot reel sound dance",
 
-    # 2. Bold Saree Transitions & Low Waist
+    # Low-Waist, Pallu & Saree Draping
     "Desi low waist saree draping reels",
     "Saree low waist thong aesthetic",
     "Desi saree pallu drop transition",
-    "Desi transparent saree lookbook reels",
+    "Desi transparent saree lookbook",
     "Desi saree backless dori reels",
     "Desi navel show saree reels",
+    "Saree draping style bold reels",
+    "Desi chiffon saree bold look",
+    "Desi saree walk slowmo reels",
 
-    # 3. Curvy Figure, Cleavage & Baddie Aesthetic
+    # Curvy Figures, Blouse & Cleavage Styling
     "Desi hourglass figure saree transition",
     "Desi deep cleavage blouse reels",
     "Desi busty curvy aesthetic reels",
-    "Desi deep neck blouse styling reels",
+    "Desi deep neck blouse styling",
     "Desi curvy figure walk reels",
+    "Desi backless choli bold reels",
+    "Desi sleeveless blouse saree look",
+    "Desi crop top backless choli reels",
 
-    # 4. Western, Nightwear & Bedroom Lookbooks
+    # Curvy Bhabhi & Mature Aesthetic
+    "Desi curvy bhabhi saree reels",
+    "Desi chubby bhabhi saree lookbook",
+    "Desi aunty curvy saree reels",
+    "Desi mature bhabhi styling reels",
+    "Desi kaamwali saree aesthetic reels",
+    "Desi bhabhi home styling reels",
+    "Desi bhabhi night saree reels",
+
+    # Lingerie, Nightwear & Bedroom Lookbooks
     "Desi bold bedroom lookbook haul",
     "Desi lingerie try on haul reels",
     "Desi bikini lookbook haul reels",
     "Desi satin nighty bold reels",
-    "Desi mini dress clubbing baddie reels",
-    "Desi crop top low waist dance reels",
+    "Desi mini dress clubbing baddie",
+    "Desi crop top low waist dance",
     "Desi towel transition reels",
-    "Desi gym baddie tight outfit reels"
+    "Desi gym baddie tight outfit",
+    "College farewell bold saree look",
+    "Desi salwar suit backless styling"
 ]
 
 def load_posted():
@@ -63,8 +82,8 @@ def get_csrf(session: aiohttp.ClientSession) -> str:
             return c.value
     return ""
 
-def extract_video_and_thumb(pin, fallback_title):
-    """MP4 Video Reels extraction (Duration >= 8s) + Cover Image"""
+def extract_video_and_thumb(pin):
+    """MP4 Video (>=8s) + Cover Image extractor"""
     raw_duration = None
     if "videos" in pin and isinstance(pin["videos"], dict):
         raw_duration = pin["videos"].get("duration")
@@ -104,6 +123,7 @@ def extract_video_and_thumb(pin, fallback_title):
                     break
         
         if best_url:
+            # Strictly Filter: Minimum 8 Seconds
             if raw_duration:
                 try:
                     dur = float(raw_duration)
@@ -114,29 +134,21 @@ def extract_video_and_thumb(pin, fallback_title):
                 except Exception:
                     pass
 
-            title = pin.get("title") or pin.get("grid_title") or fallback_title
+            title = pin.get("title") or pin.get("grid_title") or "Viral Desi Reel"
             return best_url, thumb_url, title
 
     return None, None, None
 
-async def fetch_pinterest_videos(session: aiohttp.ClientSession, keyword: str, bookmark: str = None):
+async def fetch_search_pins(session: aiohttp.ClientSession, keyword: str):
     csrf = get_csrf(session)
-    clean_keyword = keyword.strip()
-    source_url = f"/search/pins/?q={urllib.parse.quote(clean_keyword)}"
-    
-    options = {
-        "query": clean_keyword,
-        "scope": "pins",
-        "page_size": 80
-    }
-    if bookmark:
-        options["bookmarks"] = [bookmark]
-
+    source_url = f"/search/pins/?q={urllib.parse.quote(keyword)}"
     params = {
         "source_url": source_url,
-        "data": json.dumps({"options": options, "context": {}})
+        "data": json.dumps({
+            "options": {"query": keyword, "scope": "pins", "page_size": 60},
+            "context": {}
+        })
     }
-
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
         "Accept": "application/json, text/javascript, */*, q=0.01",
@@ -149,30 +161,45 @@ async def fetch_pinterest_videos(session: aiohttp.ClientSession, keyword: str, b
     }
 
     url = "https://www.pinterest.com/resource/BaseSearchResource/get/"
-
     try:
         async with session.get(url, params=params, headers=headers, timeout=25) as resp:
             if resp.status == 200:
                 data = await resp.json()
-                results = data.get("resource_response", {}).get("data", {}).get("results", [])
-                next_bm = data.get("resource_response", {}).get("bookmark")
-
-                videos = []
-                for pin in results:
-                    v_url, t_url, title = extract_video_and_thumb(pin, clean_keyword)
-                    if v_url:
-                        videos.append({
-                            "id": str(pin.get("id")),
-                            "title": title,
-                            "video_url": v_url,
-                            "thumb_url": t_url
-                        })
-
-                return videos, next_bm
+                return data.get("resource_response", {}).get("data", {}).get("results", [])
     except Exception as e:
-        print(f"⚠️ Search error for '{clean_keyword}': {e}", flush=True)
+        print(f"⚠️ Search error for '{keyword}': {e}", flush=True)
+    return []
 
-    return [], None
+async def fetch_related_pins(session: aiohttp.ClientSession, pin_id: str):
+    csrf = get_csrf(session)
+    source_url = f"/pin/{pin_id}/"
+    params = {
+        "source_url": source_url,
+        "data": json.dumps({
+            "options": {"pin_id": str(pin_id), "page_size": 50},
+            "context": {}
+        })
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/javascript, */*, q=0.01",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-Pinterest-AppState": "active",
+        "X-Pinterest-PWS-Handler": "www/pin/[id].js",
+        "X-CSRFToken": csrf,
+        "Referer": f"https://www.pinterest.com{source_url}",
+        "Origin": "https://www.pinterest.com"
+    }
+
+    url = "https://www.pinterest.com/resource/RelatedPinFeedResource/get/"
+    try:
+        async with session.get(url, params=params, headers=headers, timeout=25) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                return data.get("resource_response", {}).get("data", {}).get("results", [])
+    except Exception as e:
+        print(f"⚠️ Related fetch error for Pin {pin_id}: {e}", flush=True)
+    return []
 
 async def download_file(session: aiohttp.ClientSession, url: str, filename: str, min_size: int = 1000) -> bool:
     try:
@@ -199,7 +226,6 @@ async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, thum
             filename=os.path.basename(video_path),
             content_type="video/mp4"
         )
-
         if thumb_path and os.path.exists(thumb_path):
             data.add_field(
                 "thumbnail",
@@ -212,94 +238,105 @@ async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, thum
             res = await resp.json()
             return res.get("ok", False)
     except Exception as e:
-        print(f"⚠️ Telegram Upload Error: {e}", flush=True)
+        print(f"⚠️ Telegram upload error: {e}", flush=True)
         return False
 
-async def main_worker():
-    print(f"🟢 Viral Dance & Bold Baddie Pipeline Active for Channel: {TARGET_CHANNEL_ID}", flush=True)
+# Shared Producer-Consumer Async Queue
+video_queue = asyncio.Queue(maxsize=120)
+spider_history_set = set()
 
-    async with aiohttp.ClientSession() as session:
-        try:
-            await session.get("https://www.pinterest.com/", timeout=15)
-        except Exception:
-            pass
+async def producer_spider(session: aiohttp.ClientSession):
+    """24x7 Non-stop Harvester: Ensures the queue never runs out of videos"""
+    posted = load_posted()
+    spider_history_set.update(posted)
 
-        while True:
-            posted = load_posted()
-            print(f"📋 Total {len(posted)} bold reels in history.", flush=True)
+    print("🟢 Producer Spider Engine Started!", flush=True)
 
-            for keyword in KEYWORDS:
-                print(f"\n🔥 Scanning Pinterest for: '{keyword}'", flush=True)
+    while True:
+        for kw in SEED_KEYWORDS:
+            # Queue bhar gaya ho toh hold karein, khaali hone par instant refill
+            if video_queue.qsize() > 80:
+                await asyncio.sleep(5)
+                continue
 
-                bookmark = None
-                page_no = 1
-                consecutive_empty = 0
+            pins = await fetch_search_pins(session, kw)
+            for p in pins:
+                pid = str(p.get("id"))
+                if pid and pid not in spider_history_set:
+                    spider_history_set.add(pid)
+                    v_url, t_url, title = extract_video_and_thumb(p)
+                    if v_url:
+                        await video_queue.put({
+                            "id": pid,
+                            "video_url": v_url,
+                            "thumb_url": t_url,
+                            "title": title
+                        })
 
-                while True:
-                    videos, next_bm = await fetch_pinterest_videos(session, keyword, bookmark)
-                    print(f"🎯 Page {page_no}: Found {len(videos)} reels (>=8s).", flush=True)
+                        # Har valid video pin se related recommendations crawl karein
+                        related = await fetch_related_pins(session, pid)
+                        for rp in related:
+                            r_id = str(rp.get("id"))
+                            if r_id and r_id not in spider_history_set:
+                                spider_history_set.add(r_id)
+                                rv_url, rt_url, r_title = extract_video_and_thumb(rp)
+                                if rv_url:
+                                    await video_queue.put({
+                                        "id": r_id,
+                                        "video_url": rv_url,
+                                        "thumb_url": rt_url,
+                                        "title": r_title
+                                    })
 
-                    if not videos:
-                        consecutive_empty += 1
-                        if consecutive_empty >= 2 or not next_bm or next_bm == "-end-":
-                            break
-                    else:
-                        consecutive_empty = 0
+            await asyncio.sleep(1.5)
 
-                    for v in videos:
-                        pin_id = v["id"]
-                        if pin_id in posted:
-                            continue
+async def consumer_uploader(session: aiohttp.ClientSession):
+    """Maximum Speed Uploader: Consumes queue items at Telegram's fastest safe limit"""
+    posted = load_posted()
+    print("🟢 Consumer Uploader Engine Started!", flush=True)
 
-                        temp_video = f"pin_{pin_id}.mp4"
-                        temp_thumb = f"thumb_{pin_id}.jpg"
+    while True:
+        item = await video_queue.get()
+        pid = item["id"]
 
-                        v_ok = await download_file(session, v["video_url"], temp_video, min_size=80000)
-                        t_ok = False
-                        if v.get("thumb_url"):
-                            t_ok = await download_file(session, v["thumb_url"], temp_thumb, min_size=2000)
+        if pid in posted:
+            video_queue.task_done()
+            continue
 
-                        if v_ok:
-                            tag = keyword.replace(" ", "_")
-                            caption = (
-                                f"✨ <b>{v['title'][:65]}</b>\n\n"
-                                f"🔥 <b>#ViralDance #DesiBaddie #HotReels</b>\n"
-                                f"👑 <b>Join:</b> @InstagramPremiumCollection"
-                            )
+        temp_video = f"pin_{pid}.mp4"
+        temp_thumb = f"thumb_{pid}.jpg"
 
-                            uploaded = await send_to_telegram(
-                                session,
-                                temp_video,
-                                temp_thumb if t_ok else None,
-                                caption
-                            )
+        v_ok = await download_file(session, item["video_url"], temp_video, min_size=80000)
+        t_ok = False
+        if item.get("thumb_url"):
+            t_ok = await download_file(session, item["thumb_url"], temp_thumb, min_size=2000)
 
-                            if uploaded:
-                                print(f"🚀 Delivered Reel {pin_id} to Channel!", flush=True)
-                                save_posted(pin_id)
-                                posted.add(pin_id)
+        if v_ok:
+            caption = (
+                f"✨ <b>{item['title'][:65]}</b>\n\n"
+                f"🔥 <b>#ViralDance #DesiBaddie #HotReels #Saree</b>\n"
+                f"👑 <b>Join:</b> @InstagramPremiumCollection"
+            )
 
-                            if os.path.exists(temp_video):
-                                os.remove(temp_video)
-                            if os.path.exists(temp_thumb):
-                                os.remove(temp_thumb)
+            uploaded = await send_to_telegram(session, temp_video, temp_thumb if t_ok else None, caption)
+            if uploaded:
+                print(f"🚀 [Speed Delivery] Pin {pid} Posted to Channel! (Queue remaining: {video_queue.qsize()})", flush=True)
+                save_posted(pid)
+                posted.add(pid)
 
-                            await asyncio.sleep(2.5)
+        # Cleanup disk
+        if os.path.exists(temp_video):
+            os.remove(temp_video)
+        if os.path.exists(temp_thumb):
+            os.remove(temp_thumb)
 
-                    if not next_bm or next_bm == "-end-" or next_bm == bookmark:
-                        break
+        video_queue.task_done()
 
-                    bookmark = next_bm
-                    page_no += 1
-                    await asyncio.sleep(1.5)
-
-                await asyncio.sleep(2)
-
-            print("💤 Cycle complete. Restarting in 15 seconds...", flush=True)
-            await asyncio.sleep(15)
+        # Maximum speed: 1.5 seconds between uploads (avoids Telegram 429 FloodWait)
+        await asyncio.sleep(1.5)
 
 async def handle_ping(request):
-    return web.Response(text="Bot Active 24/7!")
+    return web.Response(text="24x7 Ultra-Speed Engine Active!")
 
 async def start_app():
     app = web.Application()
@@ -308,9 +345,19 @@ async def start_app():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"🌐 Server active on {PORT}", flush=True)
+    print(f"🌐 Keep-Alive Server active on {PORT}", flush=True)
 
-    await main_worker()
+    async with aiohttp.ClientSession() as session:
+        try:
+            await session.get("https://www.pinterest.com/", timeout=15)
+        except Exception:
+            pass
+
+        # Producer & Consumer running concurrently in background
+        await asyncio.gather(
+            producer_spider(session),
+            consumer_uploader(session)
+        )
 
 if __name__ == "__main__":
     asyncio.run(start_app())
