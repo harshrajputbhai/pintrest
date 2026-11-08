@@ -11,53 +11,40 @@ PORT = int(os.environ.get("PORT", "10000"))
 
 HISTORY_FILE = "posted_pins.txt"
 
-# Comprehensive Adult Categories (Married, Bridal, College, Unmarried, Curvy, Bhabhi)
+# 100% Bold Dance, Curves, Low-Waist & Baddie Content (Zero Wedding/Bridal)
 KEYWORDS = [
-    # 1. Newly Married / Bridal / Dulhan Look
-    "Nayi dulhan saree lookbook reels",
-    "Desi bridal saree transition bold",
-    "Newly married bhabhi saree reels",
-    "Desi dulhan backless choli reels",
-    "Sindoor look bold saree reels",
-    
-    # 2. Desi Bhabhi & Mature Curvy Aesthetic
-    "Desi curvy bhabhi saree reels",
+    # 1. Viral Desi Dances & Bedroom Moves
+    "Desi hot dance reels",
     "Desi bhabhi viral dance reels",
-    "Desi aunty curvy saree lookbook",
-    "Chubby bhabhi saree fashion reels",
-    "Desi bhabhi home styling reels",
-    
-    # 3. College / Farewell / Young Adult (18+)
-    "College farewell saree lookbook reels",
-    "College fest baddie ethnic reels",
-    "Desi college girl saree transition",
-    "University farewell bold saree look",
-    
-    # 4. Unmarried / Modern Ethnic Baddie
-    "Desi unmarried girl saree styling",
-    "Desi low waist lehenga transition",
-    "Desi crop top backless choli reels",
-    "Desi modern baddie lookbook haul",
-    "Desi girl attitude walk saree",
-    
-    # 5. Low Waist / Figure / Curvy Lookbook
+    "Desi bhabhi room dance reels",
+    "Desi girl belly dance saree reels",
+    "Desi thumka dance saree reels",
+    "Desi hot reel sound dance",
+
+    # 2. Bold Saree Transitions & Low Waist
     "Desi low waist saree draping reels",
     "Saree low waist thong aesthetic",
-    "Desi navel show saree reels",
-    "Desi hourglass figure saree transition",
+    "Desi saree pallu drop transition",
     "Desi transparent saree lookbook reels",
-    
-    # 6. Deep Neck / Cleavage / Busty Styling
+    "Desi saree backless dori reels",
+    "Desi navel show saree reels",
+
+    # 3. Curvy Figure, Cleavage & Baddie Aesthetic
+    "Desi hourglass figure saree transition",
     "Desi deep cleavage blouse reels",
-    "Desi deep neck blouse styling reels",
     "Desi busty curvy aesthetic reels",
-    "Desi backless dori blouse reels",
-    
-    # 7. Lingerie / Nightwear / Bold Hauls
+    "Desi deep neck blouse styling reels",
+    "Desi curvy figure walk reels",
+
+    # 4. Western, Nightwear & Bedroom Lookbooks
+    "Desi bold bedroom lookbook haul",
     "Desi lingerie try on haul reels",
-    "Desi satin nighty bold reels",
     "Desi bikini lookbook haul reels",
-    "Desi bold bedroom transition reels"
+    "Desi satin nighty bold reels",
+    "Desi mini dress clubbing baddie reels",
+    "Desi crop top low waist dance reels",
+    "Desi towel transition reels",
+    "Desi gym baddie tight outfit reels"
 ]
 
 def load_posted():
@@ -229,7 +216,7 @@ async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, thum
         return False
 
 async def main_worker():
-    print(f"🟢 Comprehensive Adult Reels Pipeline Active for Channel: {TARGET_CHANNEL_ID}", flush=True)
+    print(f"🟢 Viral Dance & Bold Baddie Pipeline Active for Channel: {TARGET_CHANNEL_ID}", flush=True)
 
     async with aiohttp.ClientSession() as session:
         try:
@@ -239,7 +226,7 @@ async def main_worker():
 
         while True:
             posted = load_posted()
-            print(f"📋 Total {len(posted)} curated reels logged in history.", flush=True)
+            print(f"📋 Total {len(posted)} bold reels in history.", flush=True)
 
             for keyword in KEYWORDS:
                 print(f"\n🔥 Scanning Pinterest for: '{keyword}'", flush=True)
@@ -276,7 +263,7 @@ async def main_worker():
                             tag = keyword.replace(" ", "_")
                             caption = (
                                 f"✨ <b>{v['title'][:65]}</b>\n\n"
-                                f"🔥 <b>#DesiLookbook #SareeBaddie #ViralReels</b>\n"
+                                f"🔥 <b>#ViralDance #DesiBaddie #HotReels</b>\n"
                                 f"👑 <b>Join:</b> @InstagramPremiumCollection"
                             )
 
@@ -288,7 +275,7 @@ async def main_worker():
                             )
 
                             if uploaded:
-                                print(f"🚀 Delivered Pin {pin_id} to Channel!", flush=True)
+                                print(f"🚀 Delivered Reel {pin_id} to Channel!", flush=True)
                                 save_posted(pin_id)
                                 posted.add(pin_id)
 
