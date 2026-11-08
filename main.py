@@ -18,14 +18,12 @@ PIN_HISTORY_FILE = "posted_pins.txt"
 STREAM_HISTORY_FILE = "posted_streams.txt"
 INSTA_HISTORY_FILE = "posted_insta.txt"
 
-# Target Instagram IDs (Latest to Oldest)
 TARGET_INSTA_ACCOUNTS = [
     "ur_wildcat",
     "mayaa_russian",
     "_sofi_russian"
 ]
 
-# Pinterest Seed Keywords (Screenshot Matching Aesthetics)
 SEED_KEYWORDS = [
     "backless baddie",
     "backless baddie reels",
@@ -84,6 +82,7 @@ def get_csrf(session: aiohttp.ClientSession) -> str:
     return ""
 
 def init_instaloader():
+    # max_connection_attempts=1 se instaloader 660 second freeze nahi karega
     L = instaloader.Instaloader(
         download_pictures=False,
         download_videos=False,
@@ -91,7 +90,8 @@ def init_instaloader():
         download_geotags=False,
         download_comments=False,
         save_metadata=False,
-        compress_json=False
+        compress_json=False,
+        max_connection_attempts=1
     )
     if INSTA_SESSION_ID:
         L.context._session.cookies.set("sessionid", INSTA_SESSION_ID, domain=".instagram.com")
@@ -99,7 +99,6 @@ def init_instaloader():
     return L
 
 def extract_video_and_thumb(pin):
-    """Pinterest Parser: Strictly MP4 Video (>= 8s) + Cover Image"""
     raw_duration = None
     if "videos" in pin and isinstance(pin["videos"], dict):
         raw_duration = pin["videos"].get("duration")
@@ -219,10 +218,10 @@ async def fetch_pinterest_related(session: aiohttp.ClientSession, pin_id: str):
     return []
 
 def fetch_insta_posts_sync(L, username: str):
-    """Instagram Profile: Latest to Oldest, strictly Video Reels >= 8s"""
     reels = []
     try:
         profile = instaloader.Profile.from_username(L.context, username)
+        count = 0
         for post in profile.get_posts():
             if post.is_video:
                 if post.video_duration and post.video_duration < 8.0:
@@ -234,8 +233,11 @@ def fetch_insta_posts_sync(L, username: str):
                     "caption": post.caption or "",
                     "user": username
                 })
+                count += 1
+                if count >= 15:  # Batch safe limit to prevent 429
+                    break
     except Exception as e:
-        print(f"⚠️ Instagram fetch error on @{username}: {e}", flush=True)
+        print(f"⚠️ Instagram notice on @{username}: {e}", flush=True)
     return reels
 
 async def download_file(session: aiohttp.ClientSession, url: str, filename: str, min_size: int = 1000) -> bool:
@@ -278,7 +280,6 @@ async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, thum
         print(f"⚠️ Telegram upload error: {e}", flush=True)
         return False
 
-# Unified Deduplication & Shared Queues
 seen_pins = set()
 seen_streams = set()
 seen_insta = set()
@@ -314,7 +315,6 @@ async def register_pinterest_pins(pins: list):
             await pinterest_spider_queue.put(pid)
 
 async def producer_pinterest_search(session: aiohttp.ClientSession):
-    """Producer 1: Continuous Pinterest Search across 30+ Baddie Keywords"""
     print("🟢 Pinterest Search Producer Active!", flush=True)
     bookmarks = {kw: None for kw in SEED_KEYWORDS}
 
@@ -343,7 +343,6 @@ async def producer_pinterest_search(session: aiohttp.ClientSession):
         await asyncio.sleep(5)
 
 async def producer_pinterest_spider(session: aiohttp.ClientSession):
-    """Producer 2: Infinite Related Pins Spider"""
     print("🟢 Pinterest Spider Producer Active!", flush=True)
 
     while True:
@@ -361,8 +360,7 @@ async def producer_pinterest_spider(session: aiohttp.ClientSession):
             await asyncio.sleep(2)
 
 async def producer_instagram():
-    """Producer 3: Scrapes ur_wildcat, mayaa_russian, _sofi_russian from Newest to Oldest"""
-    print("🟢 Instagram Harvester Producer Active!", flush=True)
+    print("🟢 Instagram Safe Harvester Producer Active!", flush=True)
     L = init_instaloader()
 
     while True:
@@ -390,14 +388,16 @@ async def producer_instagram():
                     })
                     new_reels += 1
 
-            print(f"🎯 @{user}: Queued {new_reels} fresh reels.", flush=True)
-            await asyncio.sleep(8)
+            if new_reels > 0:
+                print(f"🎯 @{user}: Queued {new_reels} fresh reels.", flush=True)
+            
+            # Anti-429 Cooldown between Instagram accounts
+            await asyncio.sleep(25)
 
-        print("💤 Instagram accounts cycle complete. Waiting 10 minutes...", flush=True)
+        print("💤 Instagram cycle complete. Pausing 10 minutes to protect IP...", flush=True)
         await asyncio.sleep(600)
 
 async def unified_consumer_uploader(session: aiohttp.ClientSession):
-    """Unified Consumer: Posts both Pinterest and Instagram reels into the target channel at top safe speed"""
     print("🟢 Unified Channel Uploader Active (Max Safe Speed)!", flush=True)
 
     while True:
@@ -444,10 +444,10 @@ async def unified_consumer_uploader(session: aiohttp.ClientSession):
             os.remove(temp_thumb)
 
         upload_queue.task_done()
-        await asyncio.sleep(1.8)  # Maximum safe Telegram interval
+        await asyncio.sleep(1.8)
 
 async def handle_ping(request):
-    return web.Response(text="Dual Engine (Pinterest + Instagram) Active 24/7!")
+    return web.Response(text="Dual Engine Active 24/7!")
 
 async def start_app():
     app = web.Application()
@@ -456,9 +456,8 @@ async def start_app():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"🌐 Keep-Alive Web Server active on port {PORT}", flush=True)
+    print(f"🌐 Keep-Alive Server active on {PORT}", flush=True)
 
-    # Load all persistent histories
     seen_pins.update(load_history(PIN_HISTORY_FILE))
     seen_streams.update(load_history(STREAM_HISTORY_FILE))
     seen_insta.update(load_history(INSTA_HISTORY_FILE))
@@ -470,7 +469,6 @@ async def start_app():
         except Exception:
             pass
 
-        # 4 Concurrent Coroutines: 3 Producers + 1 High-Speed Consumer
         await asyncio.gather(
             producer_pinterest_search(session),
             producer_pinterest_spider(session),
