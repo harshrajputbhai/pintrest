@@ -46,25 +46,24 @@ def save_posted_id(pin_id):
         f.write(f"{pin_id}\n")
 
 async def test_telegram_channel(session: aiohttp.ClientSession):
-    """Check karega ki Bot channel me messages post kar sakta hai ya nahi"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TARGET_CHANNEL_ID,
-        "text": "🟢 <b>Reels Automation Bot Successfully Connected!</b>\nDownloading & posting reels...",
+        "text": "🟢 <b>Reels Bot Live!</b> Scraping Pinterest & posting reels...",
         "parse_mode": "HTML"
     }
     try:
         async with session.post(url, json=payload, timeout=15) as resp:
             data = await resp.json()
             if data.get("ok"):
-                print("✅ Telegram Channel Test Passed: Bot Channel me connect ho gaya!", flush=True)
+                print("✅ Telegram Channel Test Passed!", flush=True)
                 return True
             else:
-                print(f"❌ Telegram Channel Error: {data.get('description')}", flush=True)
-                print("⚠️ DHYAN DEIN: Bot ko channel -1004468017163 me ADMIN banayein aur Post Messages ON karein!", flush=True)
+                print(f"❌ Telegram Error: {data.get('description')}", flush=True)
+                print("⚠️ Bot ko channel -1004468017163 me ADMIN banayein!", flush=True)
                 return False
     except Exception as e:
-        print(f"❌ Telegram Connection Error: {e}", flush=True)
+        print(f"❌ Connection Error: {e}", flush=True)
         return False
 
 async def fetch_pinterest_page(session: aiohttp.ClientSession, keyword: str, bookmark: str = None):
