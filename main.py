@@ -11,29 +11,53 @@ PORT = int(os.environ.get("PORT", "10000"))
 
 HISTORY_FILE = "posted_pins.txt"
 
-# 100% Strictly Indian & Desi Keywords (No Foreign Models)
+# Comprehensive Adult Categories (Married, Bridal, College, Unmarried, Curvy, Bhabhi)
 KEYWORDS = [
-    "Indian Baddie",
-    "Desi Baddie reels",
-    "Desi girl saree transition",
-    "Indian Bhabhi reels",
-    "Indian aesthetic baddie",
-    "Desi bold lookbook",
-    "Indian hot reels",
-    "Saree baddie aesthetic",
-    "Indian ethnic bold styling",
-    "Saree low waist styling reels",
-    "Saree backless blouse reels",
-    "Indian girl attitude reels",
-    "Desi glam vibes reels",
-    "Indian traditional saree transition",
-    "Desi beauty reels",
-    "Indian model reels",
-    "Desi salwar baddie reels",
-    "Indian saree fashion reels",
-    "Desi bhabhi saree style",
-    "Indian viral transition reels",
-    "Desi girl aesthetic lookbook"
+    # 1. Newly Married / Bridal / Dulhan Look
+    "Nayi dulhan saree lookbook reels",
+    "Desi bridal saree transition bold",
+    "Newly married bhabhi saree reels",
+    "Desi dulhan backless choli reels",
+    "Sindoor look bold saree reels",
+    
+    # 2. Desi Bhabhi & Mature Curvy Aesthetic
+    "Desi curvy bhabhi saree reels",
+    "Desi bhabhi viral dance reels",
+    "Desi aunty curvy saree lookbook",
+    "Chubby bhabhi saree fashion reels",
+    "Desi bhabhi home styling reels",
+    
+    # 3. College / Farewell / Young Adult (18+)
+    "College farewell saree lookbook reels",
+    "College fest baddie ethnic reels",
+    "Desi college girl saree transition",
+    "University farewell bold saree look",
+    
+    # 4. Unmarried / Modern Ethnic Baddie
+    "Desi unmarried girl saree styling",
+    "Desi low waist lehenga transition",
+    "Desi crop top backless choli reels",
+    "Desi modern baddie lookbook haul",
+    "Desi girl attitude walk saree",
+    
+    # 5. Low Waist / Figure / Curvy Lookbook
+    "Desi low waist saree draping reels",
+    "Saree low waist thong aesthetic",
+    "Desi navel show saree reels",
+    "Desi hourglass figure saree transition",
+    "Desi transparent saree lookbook reels",
+    
+    # 6. Deep Neck / Cleavage / Busty Styling
+    "Desi deep cleavage blouse reels",
+    "Desi deep neck blouse styling reels",
+    "Desi busty curvy aesthetic reels",
+    "Desi backless dori blouse reels",
+    
+    # 7. Lingerie / Nightwear / Bold Hauls
+    "Desi lingerie try on haul reels",
+    "Desi satin nighty bold reels",
+    "Desi bikini lookbook haul reels",
+    "Desi bold bedroom transition reels"
 ]
 
 def load_posted():
@@ -53,6 +77,11 @@ def get_csrf(session: aiohttp.ClientSession) -> str:
     return ""
 
 def extract_video_and_thumb(pin, fallback_title):
+    """MP4 Video Reels extraction (Duration >= 8s) + Cover Image"""
+    raw_duration = None
+    if "videos" in pin and isinstance(pin["videos"], dict):
+        raw_duration = pin["videos"].get("duration")
+
     found_videos = []
     thumb_url = None
 
@@ -81,11 +110,23 @@ def extract_video_and_thumb(pin, fallback_title):
                 u = v_list[q].get("url")
                 if u and ".mp4" in u:
                     best_url = u
+                    if not raw_duration and v_list[q].get("duration"):
+                        raw_duration = v_list[q].get("duration")
                     if not thumb_url and v_list[q].get("thumbnail"):
                         thumb_url = v_list[q]["thumbnail"]
                     break
         
         if best_url:
+            if raw_duration:
+                try:
+                    dur = float(raw_duration)
+                    if dur > 500:
+                        dur = dur / 1000.0
+                    if dur < 8.0:
+                        return None, None, None
+                except Exception:
+                    pass
+
             title = pin.get("title") or pin.get("grid_title") or fallback_title
             return best_url, thumb_url, title
 
@@ -99,7 +140,7 @@ async def fetch_pinterest_videos(session: aiohttp.ClientSession, keyword: str, b
     options = {
         "query": clean_keyword,
         "scope": "pins",
-        "page_size": 60
+        "page_size": 80
     }
     if bookmark:
         options["bookmarks"] = [bookmark]
@@ -148,13 +189,13 @@ async def fetch_pinterest_videos(session: aiohttp.ClientSession, keyword: str, b
 
 async def download_file(session: aiohttp.ClientSession, url: str, filename: str, min_size: int = 1000) -> bool:
     try:
-        async with session.get(url, timeout=40) as resp:
+        async with session.get(url, timeout=35) as resp:
             if resp.status == 200:
                 with open(filename, "wb") as f:
                     f.write(await resp.read())
                 return os.path.exists(filename) and os.path.getsize(filename) > min_size
     except Exception as e:
-        print(f"⚠️ Download failed for {filename}: {e}", flush=True)
+        print(f"⚠️ Download failed: {e}", flush=True)
     return False
 
 async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, thumb_path: str, caption: str) -> bool:
@@ -188,7 +229,7 @@ async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, thum
         return False
 
 async def main_worker():
-    print(f"🟢 Strictly Indian Reels Pipeline Active for Channel: {TARGET_CHANNEL_ID}", flush=True)
+    print(f"🟢 Comprehensive Adult Reels Pipeline Active for Channel: {TARGET_CHANNEL_ID}", flush=True)
 
     async with aiohttp.ClientSession() as session:
         try:
@@ -198,20 +239,25 @@ async def main_worker():
 
         while True:
             posted = load_posted()
-            print(f"📋 Total {len(posted)} Indian reels pehle se posted hain.", flush=True)
+            print(f"📋 Total {len(posted)} curated reels logged in history.", flush=True)
 
             for keyword in KEYWORDS:
                 print(f"\n🔥 Scanning Pinterest for: '{keyword}'", flush=True)
 
                 bookmark = None
                 page_no = 1
+                consecutive_empty = 0
 
                 while True:
                     videos, next_bm = await fetch_pinterest_videos(session, keyword, bookmark)
-                    print(f"🎯 Page {page_no}: Found {len(videos)} Indian video reels.", flush=True)
+                    print(f"🎯 Page {page_no}: Found {len(videos)} reels (>=8s).", flush=True)
 
                     if not videos:
-                        break
+                        consecutive_empty += 1
+                        if consecutive_empty >= 2 or not next_bm or next_bm == "-end-":
+                            break
+                    else:
+                        consecutive_empty = 0
 
                     for v in videos:
                         pin_id = v["id"]
@@ -221,16 +267,16 @@ async def main_worker():
                         temp_video = f"pin_{pin_id}.mp4"
                         temp_thumb = f"thumb_{pin_id}.jpg"
 
-                        v_ok = await download_file(session, v["video_url"], temp_video, min_size=30000)
+                        v_ok = await download_file(session, v["video_url"], temp_video, min_size=80000)
                         t_ok = False
                         if v.get("thumb_url"):
                             t_ok = await download_file(session, v["thumb_url"], temp_thumb, min_size=2000)
 
                         if v_ok:
-                            tag_clean = keyword.replace(" ", "_")
+                            tag = keyword.replace(" ", "_")
                             caption = (
                                 f"✨ <b>{v['title'][:65]}</b>\n\n"
-                                f"🔥 <b>#{tag_clean} #DesiReels #IndianBaddie</b>\n"
+                                f"🔥 <b>#DesiLookbook #SareeBaddie #ViralReels</b>\n"
                                 f"👑 <b>Join:</b> @InstagramPremiumCollection"
                             )
 
@@ -242,7 +288,7 @@ async def main_worker():
                             )
 
                             if uploaded:
-                                print(f"🚀 Delivered Indian Pin {pin_id} to Channel!", flush=True)
+                                print(f"🚀 Delivered Pin {pin_id} to Channel!", flush=True)
                                 save_posted(pin_id)
                                 posted.add(pin_id)
 
@@ -251,23 +297,22 @@ async def main_worker():
                             if os.path.exists(temp_thumb):
                                 os.remove(temp_thumb)
 
-                            # 4 second safe speed gap
-                            await asyncio.sleep(4)
+                            await asyncio.sleep(2.5)
 
                     if not next_bm or next_bm == "-end-" or next_bm == bookmark:
                         break
 
                     bookmark = next_bm
                     page_no += 1
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(1.5)
 
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
 
-            print("💤 Sabhi Indian keywords complete. 5 minute me naya round shuru hoga...", flush=True)
-            await asyncio.sleep(300)
+            print("💤 Cycle complete. Restarting in 15 seconds...", flush=True)
+            await asyncio.sleep(15)
 
 async def handle_ping(request):
-    return web.Response(text="Indian Reels Bot Active 24/7!")
+    return web.Response(text="Bot Active 24/7!")
 
 async def start_app():
     app = web.Application()
@@ -276,7 +321,7 @@ async def start_app():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"🌐 Keep-Alive Web Server active on port {PORT}", flush=True)
+    print(f"🌐 Server active on {PORT}", flush=True)
 
     await main_worker()
 
