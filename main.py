@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import asyncio
 import urllib.parse
@@ -45,31 +46,107 @@ def save_posted_id(pin_id):
     with open(HISTORY_FILE, "a") as f:
         f.write(f"{pin_id}\n")
 
-async def test_telegram_channel(session: aiohttp.ClientSession):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TARGET_CHANNEL_ID,
-        "text": "🟢 <b>Reels Bot Live!</b> Scraping Pinterest & posting reels...",
-        "parse_mode": "HTML"
+def get_csrf_token(session: aiohttp.ClientSession) -> str:
+    for cookie in session.cookie_jar:
+        if cookie.key == "csrftoken":
+            return cookie.value
+    return ""
+
+async def init_pinterest_session(session: aiohttp.ClientSession):
+    """Pinterest cookies aur CSRF token initialize karne ke liye"""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9"
     }
     try:
-        async with session.post(url, json=payload, timeout=15) as resp:
-            data = await resp.json()
-            if data.get("ok"):
-                print("✅ Telegram Channel Test Passed!", flush=True)
-                return True
-            else:
-                print(f"❌ Telegram Error: {data.get('description')}", flush=True)
-                print("⚠️ Bot ko channel -1004468017163 me ADMIN banayein!", flush=True)
-                return False
+        async with session.get("https://www.pinterest.com/", headers=headers, timeout=20) as r:
+            await r.read()
+            csrf = get_csrf_token(session)
+            print(f"🔑 Session Initialized! CSRF Token: {'Found' if csrf else 'Pending'}", flush=True)
     except Exception as e:
-        print(f"❌ Connection Error: {e}", flush=True)
-        return False
+        print(f"⚠️ Session init warning: {e}", flush=True)
+
+def extract_videos_from_dict(data) -> list:
+    """JSON structure ke andar se recursively video mp4 links dhoondhna"""
+    videos = []
+
+    def recursive_search(obj):
+        if isinstance(obj, dict):
+            if "videos" in obj and isinstance(obj["videos"], dict) and "video_list" in obj["videos"]:
+                v_list = obj["videos"]["video_list"]
+                best_url = None
+                for q in ["V_720P", "V_EXP7", "V_480P", "V_EXP6", "V_EXP5"]:
+                    if q in v_list and v_list[q].get("url") and ".mp4" in v_list[q]["url"]:
+                        best_url = v_list[q]["url"]
+                        break
+                if best_url:
+                    pin_id = str(obj.get("id") or abs(hash(best_url)) % 100000000)
+                    title = obj.get("title") or obj.get("grid_title") or "Viral Reel"
+                    videos.append({"id": pin_id, "title": title, "video_url": best_url})
+            for k, v in obj.items():
+                recursive_search(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                recursive_search(item)
+
+    recursive_search(data)
+    
+    # Deduplicate
+    unique = []
+    seen = set()
+    for v in videos:
+        if v["video_url"] not in seen:
+            seen.add(v["video_url"])
+            unique.append(v)
+    return unique
 
 async def fetch_pinterest_page(session: aiohttp.ClientSession, keyword: str, bookmark: str = None):
-    url = "https://www.pinterest.com/resource/BaseSearchResource/get/"
+    csrf = get_csrf_token(session)
+    
+    # METHOD 1: Web Page HTML Extraction (Bypasses 403 completely)
+    if not bookmark:
+        html_url = f"https://www.pinterest.com/search/pins/?q={urllib.parse.quote(keyword)}"
+        headers_html = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9"
+        }
+        try:
+            async with session.get(html_url, headers=headers_html, timeout=25) as resp:
+                print(f"📡 Web Page Status: {resp.status} for '{keyword}'", flush=True)
+                if resp.status == 200:
+                    html = await resp.text()
+                    
+                    # Extract Embedded JSON
+                    m = re.search(r'<script id="__PWS_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+                    if m:
+                        try:
+                            pws_json = json.loads(m.group(1))
+                            video_pins = extract_videos_from_dict(pws_json)
+                            if video_pins:
+                                return video_pins, None
+                        except Exception:
+                            pass
+                    
+                    # Fallback Regex MP4 extractor from page
+                    raw_mp4s = re.findall(r'(https://[a-zA-Z0-9./_-]+\.mp4)', html)
+                    raw_unique = list(set(raw_mp4s))
+                    if raw_unique:
+                        raw_pins = [{
+                            "id": str(abs(hash(u)) % 100000000),
+                            "title": keyword,
+                            "video_url": u
+                        } for u in raw_unique if "v1.pinimg.com" in u or "pinimg" in u]
+                        if raw_pins:
+                            return raw_pins, None
+        except Exception as e:
+            print(f"⚠️ HTML search error: {e}", flush=True)
+
+    # METHOD 2: Official BaseSearchResource API (with CSRF and active cookies)
+    api_url = "https://www.pinterest.com/resource/BaseSearchResource/get/"
     options = {
-        "query": f"{keyword} reels video",
+        "query": f"{keyword} reels",
         "scope": "pins"
     }
     if bookmark:
@@ -77,61 +154,40 @@ async def fetch_pinterest_page(session: aiohttp.ClientSession, keyword: str, boo
 
     params = {
         "source_url": f"/search/pins/?q={urllib.parse.quote(keyword)}",
-        "data": json.dumps({
-            "options": options,
-            "context": {}
-        })
+        "data": json.dumps({"options": options, "context": {}})
     }
-    headers = {
+    headers_api = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "X-Requested-With": "XMLHttpRequest",
+        "X-CSRFToken": csrf,
         "Accept": "application/json, text/javascript, */*, q=0.01",
-        "Referer": "https://www.pinterest.com/"
+        "Referer": f"https://www.pinterest.com/search/pins/?q={urllib.parse.quote(keyword)}",
+        "Origin": "https://www.pinterest.com"
     }
 
     try:
-        async with session.get(url, params=params, headers=headers, timeout=25) as resp:
-            print(f"📡 Pinterest Status: {resp.status} for '{keyword}'", flush=True)
-            if resp.status != 200:
-                return [], None
-            
-            data = await resp.json()
-            resource_resp = data.get("resource_response", {})
-            results = resource_resp.get("data", {}).get("results", [])
-            next_bookmark = resource_resp.get("bookmark")
-
-            video_pins = []
-            for pin in results:
-                v_obj = pin.get("videos")
-                if v_obj and v_obj.get("video_list"):
-                    v_list = v_obj["video_list"]
-                    best_url = None
-                    for q in ["V_720P", "V_EXP7", "V_480P", "V_EXP6", "V_EXP5"]:
-                        if q in v_list and v_list[q].get("url") and v_list[q]["url"].endswith(".mp4"):
-                            best_url = v_list[q]["url"]
-                            break
-                    
-                    if best_url:
-                        video_pins.append({
-                            "id": str(pin.get("id")),
-                            "title": pin.get("title") or pin.get("grid_title") or keyword,
-                            "video_url": best_url
-                        })
-
-            return video_pins, next_bookmark
+        async with session.get(api_url, params=params, headers=headers_api, timeout=25) as resp:
+            print(f"📡 API Resource Status: {resp.status} for '{keyword}'", flush=True)
+            if resp.status == 200:
+                data = await resp.json()
+                results = data.get("resource_response", {}).get("data", {}).get("results", [])
+                next_bm = data.get("resource_response", {}).get("bookmark")
+                video_pins = extract_videos_from_dict(results)
+                return video_pins, next_bm
     except Exception as e:
-        print(f"⚠️ Search error on '{keyword}': {e}", flush=True)
-        return [], None
+        print(f"⚠️ API search error on '{keyword}': {e}", flush=True)
+
+    return [], None
 
 async def download_file(session: aiohttp.ClientSession, url: str, filename: str) -> bool:
     try:
-        async with session.get(url, timeout=40) as resp:
+        async with session.get(url, timeout=45) as resp:
             if resp.status == 200:
                 with open(filename, "wb") as f:
                     f.write(await resp.read())
-                return os.path.exists(filename) and os.path.getsize(filename) > 50000
+                return os.path.exists(filename) and os.path.getsize(filename) > 30000
     except Exception as e:
-        print(f"⚠️ Download error: {e}", flush=True)
+        print(f"⚠️ Video download failed: {e}", flush=True)
     return False
 
 async def send_video_to_telegram(session: aiohttp.ClientSession, video_path: str, caption: str) -> bool:
@@ -161,19 +217,22 @@ async def send_video_to_telegram(session: aiohttp.ClientSession, video_path: str
         return False
 
 async def infinite_reels_pipeline():
-    print(f"🟢 Pipeline Engine Started for Channel: {TARGET_CHANNEL_ID}", flush=True)
+    print(f"🟢 Pipeline Engine Ready for Channel: {TARGET_CHANNEL_ID}", flush=True)
 
     async with aiohttp.ClientSession() as session:
-        # Step 1: Channel access test
-        await test_telegram_channel(session)
+        # Step 1: Session & Cookies Setup
+        await init_pinterest_session(session)
 
-        # Step 2: Main Scraping Loop
+        # Step 2: Continuous Scraping Loop
         while True:
             posted_ids = load_posted_ids()
             print(f"📋 Record: Total {len(posted_ids)} reels pehle se posted hain.", flush=True)
 
             for keyword in KEYWORDS:
-                print(f"\n🔥 Scanning Keyword: '{keyword}'", flush=True)
+                print(f"\n==========================================", flush=True)
+                print(f"🔥 Scanning Keyword: '{keyword}'", flush=True)
+                print(f"==========================================", flush=True)
+                
                 bookmark = None
                 page_no = 1
 
@@ -210,7 +269,7 @@ async def infinite_reels_pipeline():
                             if os.path.exists(temp_file):
                                 os.remove(temp_file)
 
-                            await asyncio.sleep(12)
+                            await asyncio.sleep(12)  # Delay between uploads
 
                     if not next_bookmark or next_bookmark == "-end-" or next_bookmark == bookmark:
                         break
@@ -219,9 +278,9 @@ async def infinite_reels_pipeline():
                     page_no += 1
                     await asyncio.sleep(4)
 
-                await asyncio.sleep(5)
+                await asyncio.sleep(6)
 
-            print("💤 All keywords cycled. Waiting 10 minutes...", flush=True)
+            print("💤 Sabhi keywords complete. Waiting 10 minutes...", flush=True)
             await asyncio.sleep(600)
 
 async def handle_ping(request):
