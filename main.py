@@ -5,10 +5,16 @@ import aiohttp
 from aiohttp import web
 import instaloader
 
+# Configuration Parameters
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "9218204780:AAFnj7zZ6JcY90xXCVKzB-fcX2cHxE19_ss")
 TARGET_CHANNEL_ID = os.environ.get("TARGET_CHANNEL_ID", "-1004438931877")
 PORT = int(os.environ.get("PORT", "10000"))
-INSTA_SESSION_ID = os.environ.get("INSTA_SESSION_ID", "")
+
+# Pre-configured Session ID
+INSTA_SESSION_ID = os.environ.get(
+    "INSTA_SESSION_ID",
+    "18005063647%3ATHXIqcvEeKai2l%3A3%3AAYky5L2ecSDtpvGlElYnS-aTNY8jtfPUcOOxVq22Q"
+)
 
 TARGET_USER = "rohitfitpreneur"
 HISTORY_FILE = "posted_rohit.txt"
@@ -31,20 +37,20 @@ async def send_status_alert(session: aiohttp.ClientSession, message: str):
             "text": message,
             "parse_mode": "HTML"
         }
-        async with session.post(url, json=payload, timeout=15) as resp:
+        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             pass
     except Exception:
         pass
 
 async def download_file(session: aiohttp.ClientSession, url: str, filename: str) -> bool:
     try:
-        async with session.get(url, timeout=45) as resp:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
             if resp.status == 200:
                 with open(filename, "wb") as f:
                     f.write(await resp.read())
-                return os.path.exists(filename) and os.path.getsize(filename) > 40000
-    except Exception:
-        pass
+                return os.path.exists(filename) and os.path.getsize(filename) > 30000
+    except Exception as e:
+        print(f"⚠️ Video download error: {e}", flush=True)
     return False
 
 async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, thumb_path: str, caption: str) -> bool:
@@ -55,32 +61,39 @@ async def send_to_telegram(session: aiohttp.ClientSession, video_path: str, thum
         data.add_field("caption", caption)
         data.add_field("parse_mode", "HTML")
         data.add_field("supports_streaming", "true")
+        
+        with open(video_path, "rb") as vf:
+            video_bytes = vf.read()
         data.add_field(
             "video",
-            open(video_path, "rb"),
+            video_bytes,
             filename=os.path.basename(video_path),
             content_type="video/mp4"
         )
+
         if thumb_path and os.path.exists(thumb_path):
+            with open(thumb_path, "rb") as tf:
+                thumb_bytes = tf.read()
             data.add_field(
                 "thumbnail",
-                open(thumb_path, "rb"),
+                thumb_bytes,
                 filename="thumb.jpg",
                 content_type="image/jpeg"
             )
 
-        async with session.post(url, data=data, timeout=120) as resp:
+        async with session.post(url, data=data, timeout=aiohttp.ClientTimeout(total=120)) as resp:
             res = await resp.json()
             if not res.get("ok"):
-                # Handle Telegram 429 FloodWait
                 if res.get("error_code") == 429:
                     wait_sec = res.get("parameters", {}).get("retry_after", 30)
                     print(f"⚠️ Telegram FloodWait: Sleeping for {wait_sec}s", flush=True)
                     await asyncio.sleep(wait_sec)
+                else:
+                    print(f"⚠️ Telegram notice: {res}", flush=True)
                 return False
             return True
     except Exception as e:
-        print(f"⚠️ Telegram upload error: {e}", flush=True)
+        print(f"⚠️ Telegram transport error: {e}", flush=True)
         return False
 
 def init_instaloader():
@@ -96,20 +109,20 @@ def init_instaloader():
     )
     if INSTA_SESSION_ID:
         L.context._session.cookies.set("sessionid", INSTA_SESSION_ID, domain=".instagram.com")
-        print("🔑 Instagram Session Cookie Active!", flush=True)
+        print("🔑 Instagram Session Cookie Successfully Injected!", flush=True)
     return L
 
-async def immortal_harvester(session: aiohttp.ClientSession):
+async def overnight_worker(session: aiohttp.ClientSession):
     posted = load_posted()
     await send_status_alert(
         session,
         f"🚀 <b>Overnight Harvester Started!</b>\n\n"
         f"🎯 <b>Target:</b> @{TARGET_USER}\n"
         f"📁 <b>Channel:</b> <code>{TARGET_CHANNEL_ID}</code>\n"
-        f"📊 <b>Pre-archived:</b> {len(posted)} reels\n"
-        f"⚡ <b>Mode:</b> Newest to Oldest (Zero Disruption)"
+        f"📊 <b>Pre-synced:</b> {len(posted)} reels\n"
+        f"⚡ <b>Session Auth:</b> Active"
     )
-    print(f"🟢 Immortal Overnight Harvester Online for @{TARGET_USER}", flush=True)
+    print(f"🟢 Immortal Harvester Online for @{TARGET_USER}", flush=True)
 
     L = init_instaloader()
 
@@ -117,18 +130,15 @@ async def immortal_harvester(session: aiohttp.ClientSession):
         try:
             posted = load_posted()
             profile = instaloader.Profile.from_username(L.context, TARGET_USER)
-            print(f"🔍 Connected to @{TARGET_USER}. Scanning feed...", flush=True)
+            print(f"🔍 Connected to @{TARGET_USER}. Traversing reels...", flush=True)
 
             batch_count = 0
 
-            # get_posts() traverses from Newest (Latest) to Oldest
             for post in profile.get_posts():
-                # Strictly Video Reels Only
                 if not post.is_video or not post.video_url:
                     continue
 
-                # Filter out short clips under 8 seconds
-                if post.video_duration and post.video_duration < 8.0:
+                if post.video_duration and post.video_duration < 6.0:
                     continue
 
                 code = post.shortcode
@@ -145,11 +155,11 @@ async def immortal_harvester(session: aiohttp.ClientSession):
                         t_ok = await download_file(session, post.url, temp_thumb)
 
                     if v_ok:
-                        clean_caption = (post.caption or "").strip()[:80]
+                        raw_cap = (post.caption or "").strip()[:80]
                         caption = (
-                            f"🏋️ <b>{clean_caption if clean_caption else 'Exclusive Fitness Reel'}</b>\n\n"
+                            f"🏋️ <b>{raw_cap if raw_cap else 'Fitness Reel'}</b>\n\n"
                             f"🔥 <b>#{TARGET_USER} #Fitness #Reels #{code}</b>\n"
-                            f"👑 <b>Archive Channel:</b> @InstagramPremiumCollection"
+                            f"👑 <b>Archive:</b> @InstagramPremiumCollection"
                         )
 
                         uploaded = await send_to_telegram(
@@ -165,18 +175,17 @@ async def immortal_harvester(session: aiohttp.ClientSession):
                             batch_count += 1
                             print(f"🚀 [Delivered] [{code}] | Total: {len(posted)}", flush=True)
 
-                            # Progress alert every 50 reels
                             if batch_count % 50 == 0:
                                 await send_status_alert(
                                     session,
                                     f"📈 <b>Progress Milestone:</b> {batch_count} new reels synced! (Total: {len(posted)})"
                                 )
 
-                    # 8.0s safe speed: Maximum rate that avoids Render Cloud IP 429 blocks
+                    # Safe delay between reels to prevent cloud throttling
                     await asyncio.sleep(8.0)
 
                 finally:
-                    # Guaranteed memory & disk cleanup to prevent 512MB RAM overflow
+                    # Clear RAM/Disk immediately
                     if os.path.exists(temp_video):
                         os.remove(temp_video)
                     if os.path.exists(temp_thumb):
@@ -184,10 +193,10 @@ async def immortal_harvester(session: aiohttp.ClientSession):
 
             await send_status_alert(
                 session,
-                f"✅ <b>Night Sync Complete!</b>\nTarget @{TARGET_USER} has no more pending reels. Total archived: {len(posted)}"
+                f"✅ <b>Night Archive Complete!</b>\nTarget @{TARGET_USER} has no more reels pending. Total: {len(posted)}"
             )
-            print("💤 All posts reviewed. Sleeping 20 minutes before next check...", flush=True)
-            await asyncio.sleep(1200)
+            print("💤 Feed completed. Sleeping 30 minutes before re-checking...", flush=True)
+            await asyncio.sleep(1800)
 
         except Exception as e:
             err = str(e).lower()
@@ -197,8 +206,8 @@ async def immortal_harvester(session: aiohttp.ClientSession):
                 print("🛑 Rate limit encountered. Entering 10-minute silent cool-down...", flush=True)
                 await asyncio.sleep(600)
             else:
-                print("🔄 Network glitch encountered. Auto-resuming in 60 seconds...", flush=True)
-                await asyncio.sleep(60)
+                print("🔄 Network reconnecting. Auto-resuming in 45 seconds...", flush=True)
+                await asyncio.sleep(45)
 
 async def handle_ping(request):
     return web.Response(text="Immortal Harvester Active 24/7!")
@@ -210,10 +219,10 @@ async def start_app():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"🌐 Keep-Alive Web Server active on port {PORT}", flush=True)
+    print(f"🌐 Keep-Alive Web Server listening on port {PORT}", flush=True)
 
     async with aiohttp.ClientSession() as session:
-        await immortal_harvester(session)
+        await overnight_worker(session)
 
 if __name__ == "__main__":
     asyncio.run(start_app())
